@@ -8,6 +8,6 @@ It displays the R command used to extract data so you can copy/paste it in your 
 
 ## Demo
 
-Demo available at 
+Demo available at https://calindamian.shinyapps.io/oecd_browser/
 
 ## Preview
