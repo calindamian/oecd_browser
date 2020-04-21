@@ -11,5 +11,6 @@ It displays the R command used to extract data so you can copy/paste it in your 
 Demo available at https://calindamian.shinyapps.io/oecd_browser/
 
 ## Preview
-![image](https://user-images.githubusercontent.com/61669129/79851828-1fe3af80-83c6-11ea-9ea5-280328dc50b6.png)
+![image](https://user-images.githubusercontent.com/61669129/79892951-9fdc3a80-8403-11ea-98e4-33316cd21f84.png)
+
 
