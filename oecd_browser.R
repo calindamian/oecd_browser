@@ -14,12 +14,45 @@ library (DT)
 library(rlang)
 library(shinyWidgets)
 library(shinydashboard)
+library(shinycssloaders)
+
+# helper functions
+'%ni%' <- Negate('%in%')
+
+oecd_recode_data = function (ds , tb , colname = "id") {
+  
+  #recode values
+  cols = colnames(tb) %>%
+    intersect( ds$VAR_DESC[[colname]])
+  map ( cols , function (col) {
+    dict =c ()
+    dict[ds[[col]]$id] = ds[[col]]$label
+    
+    tb <<- tb %>%
+      mutate_at( col , function (x ) {
+        recode(x , !!!dict)}  )
+  }
+  )
+  
+  #rename columns
+  cols_rename = ds$VAR_DESC %>% 
+    filter (id %in% colnames(tb))
+  tb %>% 
+    rename_at(vars(matches (cols_rename$id) ) , funs (cols_rename$description ) )
+}
 
 
 #datasets 
 tb_oecd_ds =        search_dataset("*") %>%
                             arrange(title)
+                
+#ds codes
 
+ds_codes = c ("KEI" , "CSPCUBE" , "HIGH_AGLINK_2019" , "SHA" , "HEALTH_STAT" ,
+              "GOV_DEBT" , "MEI_FIN" , "GOV_2019" , "RS_GBL" , "SNA_TABLE1")
+
+tb_oecd_ds = tb_oecd_ds %>%
+              filter (id %in%  ds_codes)
 
 font_family = "font-family: \"Trebuchet MS\",  Helvetica, sans-serif;"
 
@@ -27,49 +60,66 @@ font_family = "font-family: \"Trebuchet MS\",  Helvetica, sans-serif;"
 ui <- fluidPage(
 
     tags$head(
-            tags$style(str_replace_all("body {#font_family# background-color: #F4F4F4;}"
-                              , "#font_family#" , font_family )
+            tags$style(str_replace_all("body {#font_family# background-color: #F4F4F4;}
+                                       .selectize-input {font-size:12px}
+                                       .shiny-input-container { margin-top:-10px}" # controls spacing beteen controls
+                                        , "#font_family#" , font_family )
             )
     ) ,
-    titlePanel("OECD Data Browser") ,
-    div ("Data Source: " , 
-         #style = str_c ( font_family , "font-size: 10px;line-height:150%;") ,
-         tags$a(href="https://data.oecd.org/", "https://data.oecd.org/" , target="_blank") ) ,
+   
+  
     
     useShinydashboard(),
+    fluidRow( column( width =11 ,
+                  box (width = 12 ,
+                      div ( style = "background-color:#4292c6;color:white;" ,
+                     titlePanel("OECD Data Browser") ,
+                     "Data Source: " , 
+                     #style = str_c ( font_family , "font-size: 10px;line-height:150%;") ,
+                     tags$a(style = "color:white;", href="https://data.oecd.org/", "https://data.oecd.org/" , target="_blank") ) ) ) ) ,
     # Sidebar with a slider input for number of bins 
     fluidRow(   
-       column( width = 4 ,
+ 
+       column( width = 3 ,
           
           box(width = 12 , 
               title = "Select Data Set" ,
-              
-              selectInput("oecd_ds", label = "Dataset",  choices =tb_oecd_ds$title) ) ,
+              solidHeader = TRUE,
+              status = "primary" ,
+              selectInput("oecd_ds", label = "Dataset",  choices =tb_oecd_ds$title ) ) ,
           
-          box (width = 12 , 
-               title = "Available Inputs" ,
-               uiOutput("oecd_params") ,
-               tags$label(class = "control-label" ,
-                            "R Command") ,
-               verbatimTextOutput ("oecd_get_data_command" ) ,
-               actionButton("goButton", "Get Data!")            
-               )
-          
-          
+          tabBox(
+             width = 12 ,
+             tabPanel(h5 ("Browse structure"),  
+                      selectInput ("oecd_ds_str", label = "Dataset Structure", choices =c ("")) ,
+                      dataTableOutput("tb_oecd_ds_str" ) %>% withSpinner()
+                      
+                      ) ,
+             
+             tabPanel(h5 ("Inputs") , 
+                      uiOutput("oecd_params") ,
+                      tags$label(class = "control-label" ,
+                                 "R Command") ,
+                      verbatimTextOutput ("oecd_get_data_command" ) ,
+                      #verbatimTextOutput ("time_slider" ) ,
+                      actionButton("goButton", "Get Data!")      
+                      
+                    )                
+              )
           ),
 
         # Show a plot of the generated distribution
-       column( width = 8 ,
-                    box(width = 12 ,
-                     title = "Browse data structure" ,
-                     #verbatimTextOutput("oecd_ds_code") ,
-                     selectInput ("oecd_ds_str", label = "Dataset Structure", choices =c ("")) ,
-                      dataTableOutput("tb_oecd_ds_str" ) 
-                     ) ,
-                    
+       column( width = 8,
+
                     box(width = 12 ,
                           title = "OECD data" ,
-                          dataTableOutput("tb_oecd_data") 
+                          solidHeader = TRUE,
+                          status = "primary" ,
+                         fluidRow(
+                          column(width = 3 , downloadButton("download1","Download data as csv" ) ) ,
+                          column (width = 3 , offset = 0, checkboxInput("last_tb_oecd_data", "Latest data available", FALSE) )
+                          ),
+                          dataTableOutput("tb_oecd_data") %>% withSpinner()
                     
                     )
        )
@@ -109,29 +159,6 @@ server <- function(input, output, session) {
       
     })
     
-    str_data_command = reactive(  {
-      
-      ds =  tb_selected_oecd_ds () %>%
-        select (id) %>%
-        pull%>%
-        as.character() 
-      
-      location =        input$oecd_ds_location %>% 
-        str_c(collapse = "','") %>% 
-        str_c ("'" , . , "'") %>% 
-        str_c ("c (" , . ,")")
-      
-      trans =  input$oecd_ds_transaction %>% 
-        str_c(collapse = "','") %>% 
-        str_c ("'" , . , "'") %>% 
-        str_c ("c (" , . ,")") 
-      
-      
-      str_c( "get_dataset(" , "'" , ds, "'" , 
-             ",filter = list (" , location , "," , trans, ")"  ,
-             ", start_time = 2012 , end_time = 2020)")
-      
-    })
     
     str_data_command_selected = reactive(  {
       
@@ -166,13 +193,67 @@ server <- function(input, output, session) {
       
       filter =  str_c(filter , ")")
       
-      str_c( "get_dataset(" , "'" , ds_code, "'" , "," , filter , ")")
+      command = str_c( "get_dataset(" , "'" , ds_code, "'" , "," , filter ,  ")")
+      
+      if (!is.null( input$time_slider ) ) {
+        time_filter = str_c ("start_time = " ,input$time_slider[1] ,", end_time= ", input$time_slider[2]) 
+        command = str_c( "get_dataset(" , "'" , ds_code, "'" , "," , filter , "," , time_filter , ")")
+      }
+
+      command
+      
       
     })   
     
+    tb_oecd_data = eventReactive( input$goButton , {
+
+      ds = tb_selected_ds_str ()
+      
+      tb_expr = rlang::parse_expr(str_command_exec ())
+      
+      tb = tryCatch ( { 
+                        rlang::eval_tidy(tb_expr)
+                        },  
+                        error=function(theError) {
+                          print (  str_c ("get_dataset : " , theError$message) )
+                          return(tibble()) 
+                        }
+                        )
+      
+      #print (str_c ("tb_oecd_data :" , now() ))
+      oecd_recode_data(ds , tb)
+      
+    }
+    )
+    
+    tb_display = eventReactive( c (tb_oecd_data (), input$last_tb_oecd_data) ,{
+      
+      tb = tb_oecd_data ()
+      #get latest available datapoints
+      if (input$last_tb_oecd_data) {
+        
+        group_cols = colnames(tb) %>%
+          setdiff( c("obsTime" , "obsValue" , "Observation Status") )
+        
+        tb = tb %>%
+          arrange(desc (obsTime))  %>%
+          group_by_at(group_cols) %>%
+          filter ( row_number() == 1)%>%
+          arrange(Country)
+        
+      }
+      
+      #print (str_c ("tb_display :" , now() ))
+      
+      tb
+      
+    } )
+    
     str_command_exec = eventReactive( input$goButton , {
       str_data_command_selected ()
+    
     })
+    
     
     observeEvent(input$oecd_ds , {
       
@@ -181,9 +262,15 @@ server <- function(input, output, session) {
                 pull%>%
                 as.character()
       
+        ds = tb_selected_ds_str ()
+        choices  = ds$VAR_DESC %>%
+                      filter ( id != "OBS_VALUE") %>%
+                      select (description) %>%
+                      pull
+        
         updateSelectInput(session , "oecd_ds_str" ,
-                          choices = names(tb_selected_ds_str ()) ,
-                          label = str_c ("Dataset " , code , " structure")
+                          choices = choices,
+                          label = str_c ("Dataset Code: " , code )
                           )
     })
     
@@ -197,12 +284,24 @@ server <- function(input, output, session) {
     )
     
     output$tb_oecd_ds_str = renderDataTable( {
+      
+      ds = tb_selected_ds_str ()
+      
+      selected_var = ds$VAR_DESC %>%
+                      filter (description %in% input$oecd_ds_str )%>%
+                      select (id) %>%
+                      pull
         
       datatable (
-                  tb_selected_ds_str ()[[input$oecd_ds_str]] ,
-                  options = list(pageLength = 5) ,
+                  ds [[selected_var]] ,
+                  options = list(pageLength = 5 , 
+                                 autoWidth = T ,
+                                 initComplete = htmlwidgets::JS(
+                                   "function(settings, json) {",
+                                   paste0("$(this.api().table().container()).css({'font-size': '10px'});"),
+                                   "}") ) ,
                   rownames= F
-      )
+      ) 
     })
     
     output$oecd_get_data_command = renderText( { 
@@ -214,16 +313,22 @@ server <- function(input, output, session) {
     
     output$tb_oecd_data = renderDataTable( {
       
-       str = str_command_exec ()
+
       
-       tb_expr = rlang::parse_expr(str)
-       
+      
        datatable(
-                      rlang::eval_tidy(tb_expr) ,
-                      extensions=c('Scroller') ,
-                      options = list(
+                      #tb_oecd_data (),
+                      tb_display (),
+                      extensions = c('Scroller'),
+                      callback = JS("$('div.dwnld').append($('#download1'));"),
+                      options = list( 
+                        #dom = 'B<"dwnld">frtip', #'B<"dwnld">frtip'
+                        initComplete = htmlwidgets::JS(
+                        "function(settings, json) {",
+                        paste0("$(this.api().table().container()).css({'font-size': '12px'});"),
+                        "}") ,
                                   
-                                     scrollX=TRUE
+                        scrollX=TRUE
                       ),
                       rownames= F
                       
@@ -239,22 +344,47 @@ server <- function(input, output, session) {
       # get params till time row is reached
       ds =  tb_selected_ds_str ()
       
-      tb_params () %>% 
-        select (id , description)%>% 
-        pmap( function (id , description) {
-          
-            choices = ds[[id]] %>% 
-                        select (label)  %>% 
-                        pull
+      inputs = tb_params () %>% 
+              select (id , description)%>% 
+              pmap( function (id , description) {
+                
+                  choices = ds[[id]] %>% 
+                              select (label)  %>% 
+                              pull
+                  
+                  selectInput (id , label = description, choices =choices , multiple = T)
+              
+                })
             
-            selectInput (id , label = description, choices =choices , multiple = T)
-        
-          })
-      
 
+      #add time slider if time dimension is available
+      slider =  ds$VAR_DESC%>% 
+         filter (description %in% c ("Year", "Time" , "Time period") )%>% 
+          pmap( function (id , description) {
+            sliderTextInput ("time_slider",label = description,
+                             choices = ds[[id]]$id ,
+                             selected = range (ds[[id]]$id) )
+            
+          })
+                 
+      
+      inputs %>% 
+        append ( slider)
       
     })
     
+    output$download1 <- downloadHandler(
+      filename = function() {
+        paste("data-", Sys.Date(), ".csv", sep="")
+      },
+      content = function(file) {
+        write.csv(tb_oecd_data (), file)
+      }
+    )
+    
+    output$time_slider = renderPrint( {
+      print( nrow( tb_display () ))
+    })
 }
 
 # Run the application 
